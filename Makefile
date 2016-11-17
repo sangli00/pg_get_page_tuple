@@ -9,7 +9,7 @@ USE_PGXS=1
 
 
 ifdef USE_PGXS
-PG_CONFIG = /usr/local/psql-9.5.3/bin/pg_config
+PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else
