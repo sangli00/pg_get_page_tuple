@@ -1,0 +1,4 @@
+comment = 'pg_fuck_block'
+default_version = '1.0'
+module_pathname = '$libdir/pg_fuck_block'
+relocatable = true

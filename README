@@ -1,0 +1,33 @@
+Building
+-----------
+make 
+make install 
+
+Usage
+---------
+postgres=# create extension pg_fuck_block ;
+CREATE EXTENSION
+
+postgres=# create table tab(col1 bigint,col2 text,col3 timestamp);
+CREATE TABLE
+
+postgres=# insert into tab values(1,'test',now());
+INSERT 0 1
+postgres=# insert into tab values(2,'test1',now());
+INSERT 0 1
+postgres=# select * from tab;
+ col1 | col2  |            col3
+------+-------+----------------------------
+    1 | test  | 2016-11-17 23:26:28.723014
+    2 | test1 | 2016-11-17 23:26:41.987506
+(2 rows)
+
+
+postgres=# select pg_get_page_tuple('tab',0);
+           pg_get_page_tuple
+----------------------------------------
+ (1,test,"2016-11-17 23:26:28.723014")
+ (2,test1,"2016-11-17 23:26:41.987506")
+(2 rows)
+
+
