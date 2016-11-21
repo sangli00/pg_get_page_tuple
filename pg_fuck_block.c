@@ -8,6 +8,10 @@
 #include "access/tuptoaster.h"
 #include "catalog/pg_type.h"
 #include "utils/snapshot.h"
+#include "utils/tqual.h"
+#include "storage/predicate.h"
+#include "storage/procarray.h"
+#include "utils/tqual.h"
 
 PG_MODULE_MAGIC;
 
@@ -16,11 +20,13 @@ Datum pg_get_page_tuple(PG_FUNCTION_ARGS);
 
 
 typedef struct _Itemoff{
-	OffsetNumber lineoff;
-	ItemId	lpp;
-	int	lines;
-	Page 	page;
-	Relation rel; 
+	OffsetNumber 	lineoff;
+	ItemId		lpp;
+	int		lines;
+	Page 		page;
+	Relation 	rel;
+	Buffer		buffer;
+	TransactionId 	OldestXmin;		 
 } _Itemoff;
 
 Datum pg_get_page_tuple(PG_FUNCTION_ARGS){
@@ -39,30 +45,23 @@ Datum pg_get_page_tuple(PG_FUNCTION_ARGS){
 
 		MemoryContext oldcxt;
 		int natts = 1;
+		TransactionId OldestXmin;
+
 		rel = relation_open(relid, AccessShareLock);
+		OldestXmin = GetOldestXmin(rel, true);
 
 		if(RelationGetNumberOfBlocks(rel) <= (BlockNumber) (blkno) ) 
           		   elog(ERROR, "block number out of range");
 
 
-		if (blkno < 0 || blkno > MaxBlockNumber){
-			relation_close(rel, AccessShareLock);
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("invalid block number")));
-		}
-
 		funccxt = SRF_FIRSTCALL_INIT();	
 		oldcxt = MemoryContextSwitchTo(funccxt->multi_call_memory_ctx);
-
 
 		buffer =  ReadBuffer(rel,blkno);
 		LockBuffer(buffer, BUFFER_LOCK_SHARE);
 
 		page = BufferGetPage(buffer);	
-		UnlockReleaseBuffer(buffer);
 
-		relation_close(rel, AccessShareLock);
 
 		itemoff = palloc(sizeof(_Itemoff));
 
@@ -71,8 +70,11 @@ Datum pg_get_page_tuple(PG_FUNCTION_ARGS){
 		itemoff->lpp = NULL;
 		itemoff->page = page;
 		itemoff->rel = rel;
+		itemoff->OldestXmin = OldestXmin;
+		itemoff->buffer = buffer;
 
-
+		relation_close(rel, AccessShareLock);
+		UnlockReleaseBuffer(buffer);
 		tupleDesc = CreateTemplateTupleDesc(rel->rd_att->natts, false);
 
 		for(;natts <=rel->rd_att->natts;natts++)
@@ -82,7 +84,6 @@ Datum pg_get_page_tuple(PG_FUNCTION_ARGS){
 		funccxt->user_fctx = itemoff;
 
 		MemoryContextSwitchTo(oldcxt);
-
 	}
 
 	funccxt = SRF_PERCALL_SETUP();
@@ -114,21 +115,25 @@ Datum pg_get_page_tuple(PG_FUNCTION_ARGS){
 			loctup.t_len = ItemIdGetLength(itemoff->lpp);
 			ItemPointerSet(&(loctup.t_self), blkno, itemoff->lineoff);
 
-			for(; natts <=  funccxt->tuple_desc->natts;natts++){
-				values[natts-1] = heap_getattr(&loctup, natts, funccxt->tuple_desc, &nulls);
+			if(HeapTupleSatisfiesVacuum(&loctup, itemoff->OldestXmin, itemoff->buffer) !=  HEAPTUPLE_DEAD){
+
+				for(; natts <=  funccxt->tuple_desc->natts;natts++)
+					values[natts-1] = heap_getattr(&loctup, natts, funccxt->tuple_desc, &nulls);
+				
+
+				tup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
+				result = HeapTupleGetDatum(tup);
+
+				MemSet(values, 0, sizeof(values));
+				MemSet(isnull, 0, sizeof(isnull));
+
+				SRF_RETURN_NEXT(funccxt, result);
 			}
-
-			tup = heap_form_tuple(funccxt->tuple_desc, values, isnull);
-			result = HeapTupleGetDatum(tup);
-
-			MemSet(values, 0, sizeof(values));
-			MemSet(isnull, 0, sizeof(isnull));
-
-			SRF_RETURN_NEXT(funccxt, result);
 		}
 
 	}
 
+	pfree(itemoff);	
 	SRF_RETURN_DONE(funccxt);
 }
 
